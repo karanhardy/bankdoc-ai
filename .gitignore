@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/cache
+.pytest_cache/
+
+# Local generated data
+data/bronze/*
+data/silver/*
+data/gold/*
+
+# Keep sample documents
+!data/sample_documents/
+
+# Generated test documents
+data/sample_documents/*.pdf
+data/sample_documents/*.png
