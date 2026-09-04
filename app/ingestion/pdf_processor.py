@@ -1,5 +1,5 @@
 from pathlib import Path
-
+import pymupdf
 from pypdf import PdfReader
 
 
@@ -47,5 +47,61 @@ class PDFProcessor:
                     "text": text.strip(),
                 }
             )
+
+        return pages
+
+    def render_page_as_image(
+            self,
+            page_number: int,
+            output_path: Path,
+            dpi: int = 300,
+    ) -> Path:
+        """
+        Render a PDF page as an image.
+
+        Args:
+            page_number: 1-based page number.
+            output_path: Where the image should be saved.
+            dpi: Rendering resolution.
+
+        Returns:
+            Path to the generated image.
+        """
+
+        if page_number < 1:
+            raise ValueError("Page number must be >= 1.")
+
+        reader = pymupdf.open(str(self.file_path))
+
+        try:
+            if page_number > len(reader):
+                raise ValueError(
+                    f"Page {page_number} does not exist. "
+                    f"PDF contains {len(reader)} pages."
+                )
+
+            page = reader[page_number - 1]
+
+            scale = dpi / 72
+
+            matrix = pymupdf.Matrix(scale, scale)
+
+            pixmap = page.get_pixmap(
+                matrix=matrix,
+                alpha=False,
+            )
+
+            output_path = Path(output_path)
+            output_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            pixmap.save(str(output_path))
+
+            return output_path
+
+        finally:
+            reader.close()
 
         return pages
