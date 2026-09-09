@@ -54,7 +54,7 @@ class PDFProcessor:
             self,
             page_number: int,
             output_path: Path,
-            dpi: int = 300,
+            dpi: int = 200,
     ) -> Path:
         """
         Render a PDF page as an image.
@@ -103,5 +103,3 @@ class PDFProcessor:
 
         finally:
             reader.close()
-
-        return pages

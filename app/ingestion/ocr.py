@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import pytesseract
 
 
@@ -15,11 +15,8 @@ class OCRProcessor:
         """
         Extract text from an image using Tesseract OCR.
 
-        Args:
-            image_path: Path to the image.
-
-        Returns:
-            Extracted text.
+        The image is preprocessed before OCR to improve
+        recognition quality.
         """
 
         image_path = Path(image_path)
@@ -36,6 +33,25 @@ class OCRProcessor:
 
         image = Image.open(image_path)
 
-        text = pytesseract.image_to_string(image)
+        # Convert to grayscale
+        image = image.convert("L")
+
+        # Increase contrast
+        image = ImageEnhance.Contrast(
+            image
+        ).enhance(1.5)
+
+        # Reduce small image noise
+        image = image.filter(
+            ImageFilter.MedianFilter(
+                size=3
+            )
+        )
+
+        # OCR
+        text = pytesseract.image_to_string(
+            image,
+            config="--psm 6",
+        )
 
         return text.strip()

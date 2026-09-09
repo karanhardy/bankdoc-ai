@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.ingestion.pdf_processor import PDFProcessor
+from app.ingestion.document_extractor import DocumentExtractor
 from app.ingestion.document_parser import BankStatementParser
 from app.storage.bronze import BronzeStorage
 from app.storage.silver import SilverStorage
@@ -72,9 +72,11 @@ class DocumentPipeline:
 
         print("\n[1/5] Extracting PDF...")
 
-        pdf_processor = PDFProcessor(pdf_path)
+        document_extractor = DocumentExtractor(
+            pdf_path
+        )
 
-        pages = pdf_processor.extract_text()
+        pages = document_extractor.extract()
 
         print(
             f"       Pages extracted: {len(pages)}"
