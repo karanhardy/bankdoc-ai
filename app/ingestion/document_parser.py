@@ -8,27 +8,23 @@ from app.ingestion.document_normalizer import DocumentNormalizer
 
 class BankStatementParser:
     """
-    Parses normalized bank-statement text into structured data.
+    Parses bank statement text from both:
 
-    Expected transaction format:
+    1. Native PDF extraction, where table columns may be
+       separated across multiple lines.
+
+    2. OCR extraction, where a transaction may appear on
+       a single line.
+
+    Canonical transaction structure:
 
         DATE | DESCRIPTION | DEBIT | CREDIT | BALANCE
-
-    The parser is intentionally tolerant of OCR output because OCR
-    may introduce minor formatting differences.
     """
-
-    DATE_PATTERN = re.compile(
-        r"\b(\d{2}-[A-Za-z]{3}-\d{4})\b"
-    )
 
     AMOUNT_PATTERN = re.compile(
         r"-?\d{1,3}(?:,\d{3})*(?:\.\d{2})"
     )
 
-    # These descriptions are classified explicitly.
-    # Do NOT use a generic "credit" check because
-    # "Credit Card Payment" is a debit transaction.
     CREDIT_DESCRIPTIONS = {
         "salary credit",
         "interest credit",
@@ -44,7 +40,6 @@ class BankStatementParser:
         "online shopping",
     }
 
-    # OCR variations mapped to canonical descriptions.
     DESCRIPTION_ALIASES = {
         "salarycredit": "Salary Credit",
         "salaycredit": "Salary Credit",
@@ -62,7 +57,6 @@ class BankStatementParser:
 
         "grocerystore": "Grocery Store",
         "grocerystre": "Grocery Store",
-        "grocerystore": "Grocery Store",
 
         "nefttransfer": "NEFT Transfer",
         "neft": "NEFT Transfer",
@@ -78,17 +72,12 @@ class BankStatementParser:
         self,
         text: str,
     ) -> dict[str, Any]:
-        """
-        Parse raw or normalized bank-statement text.
-        """
 
         if not text or not text.strip():
             raise ValueError(
                 "Cannot parse empty document text."
             )
 
-        # Normalizing here makes the parser safe to use
-        # independently as well as through DocumentExtractor.
         normalized_text = DocumentNormalizer.normalize(
             text
         )
@@ -129,6 +118,7 @@ class BankStatementParser:
         text: str,
         pattern: str,
     ) -> str | None:
+
         match = re.search(
             pattern,
             text,
@@ -179,12 +169,48 @@ class BankStatementParser:
             "end": end_date.isoformat(),
         }
 
+    # =========================================================
+    # TRANSACTION EXTRACTION
+    # =========================================================
+
     def _extract_transactions(
         self,
         text: str,
     ) -> list[dict[str, Any]]:
 
-        transactions: list[dict[str, Any]] = []
+        # First handle OCR/native layouts where a complete
+        # transaction exists on one line.
+        transactions = (
+            self._extract_transactions_from_lines(
+                text
+            )
+        )
+
+        if transactions:
+            return transactions
+
+        # Native PDF extraction can split table cells over
+        # multiple lines. Fall back to parsing the complete
+        # text stream.
+        return self._extract_transactions_from_stream(
+            text
+        )
+
+    # =========================================================
+    # METHOD 1 — COMPLETE TRANSACTION ON ONE LINE
+    # =========================================================
+
+    def _extract_transactions_from_lines(
+        self,
+        text: str,
+    ) -> list[dict[str, Any]]:
+
+        transactions = []
+
+        date_pattern = re.compile(
+            r"^[\"'`“”‘’\s]*"
+            r"(\d{2}-[A-Za-z]{3}-\d{4})\b"
+        )
 
         for raw_line in text.splitlines():
 
@@ -193,157 +219,209 @@ class BankStatementParser:
             if not line:
                 continue
 
-            transaction = self._parse_transaction_line(
+            date_match = date_pattern.match(line)
+
+            if not date_match:
+                continue
+
+            description = self._extract_description(
                 line
             )
 
-            if transaction is not None:
-                transactions.append(
-                    transaction
+            if description is None:
+                continue
+
+            amount_matches = (
+                self.AMOUNT_PATTERN.findall(
+                    line[date_match.end():]
                 )
+            )
+
+            if len(amount_matches) < 2:
+                continue
+
+            transaction_amount_text = (
+                amount_matches[-2]
+            )
+
+            balance_text = amount_matches[-1]
+
+            transaction_amount = self._parse_amount(
+                transaction_amount_text
+            )
+
+            balance = self._parse_amount(
+                balance_text
+            )
+
+            if (
+                transaction_amount is None
+                or balance is None
+            ):
+                continue
+
+            debit, credit = (
+                self._classify_transaction(
+                    description,
+                    transaction_amount,
+                )
+            )
+
+            transactions.append(
+                {
+                    "date": self._parse_date(
+                        date_match.group(1)
+                    ),
+                    "description": description,
+                    "debit": debit,
+                    "credit": credit,
+                    "balance": balance,
+                }
+            )
 
         return transactions
 
-    def _parse_transaction_line(
+    # =========================================================
+    # METHOD 2 — NATIVE PDF STREAM
+    # =========================================================
+
+    def _extract_transactions_from_stream(
         self,
-        line: str,
-    ) -> dict[str, Any] | None:
+        text: str,
+    ) -> list[dict[str, Any]]:
 
-        # ---------------------------------------------------------
-        # 1. Extract date
-        # ---------------------------------------------------------
+        transactions = []
 
-        date_match = re.match(
-            r"^[\"'`“”‘’\s]*"
-            r"(\d{2}-[A-Za-z]{3}-\d{4})\b",
-            line,
-        )
-
-        if not date_match:
-            return None
-
-        date_text = date_match.group(1)
-
-        try:
-            date_value = datetime.strptime(
-                date_text,
-                "%d-%b-%Y",
-            ).date()
-
-        except ValueError:
-            return None
-
-        # ---------------------------------------------------------
-        # 2. Identify transaction description
-        # ---------------------------------------------------------
-
-        description = self._extract_description(
-            line
-        )
-
-        if description is None:
-            return None
-
-        # ---------------------------------------------------------
-        # 3. Extract monetary values
-        # ---------------------------------------------------------
-
-        remainder = line[date_match.end():]
-
-        amount_matches = self.AMOUNT_PATTERN.findall(
-            remainder
-        )
-
-        if len(amount_matches) < 2:
-            return None
-
-        # For a bank statement:
+        # Native pypdf output can look like:
         #
-        #   transaction amount + balance
+        # Date
+        # Description
+        # Debit
+        # Credit
+        # Balance
+        # 02-Jan-2026
+        # Salary Credit
+        # -
+        # 85,000.00
+        # 125,000.00
         #
-        # are normally the final two meaningful amounts.
-        transaction_amount_text = (
-            amount_matches[-2]
+        # The regex below intentionally allows arbitrary
+        # whitespace between these pieces.
+
+        amount_pattern = (
+            r"-?"
+            r"\d{1,3}"
+            r"(?:,\d{3})*"
+            r"(?:\.\d{2})"
         )
 
-        balance_text = amount_matches[-1]
-
-        transaction_amount = self._parse_amount(
-            transaction_amount_text
+        description_pattern = (
+            r"(Salary\s+Credit"
+            r"|Electricity\s+Bill"
+            r"|Internet\s+Bill"
+            r"|Grocery\s+Store"
+            r"|NEFT\s+Transfer"
+            r"|Credit\s+Card\s+Payment"
+            r"|Online\s+Shopping)"
         )
 
-        balance = self._parse_amount(
-            balance_text
+        pattern = re.compile(
+            rf"(\d{{2}}-[A-Za-z]{{3}}-\d{{4}})"
+            rf"\s+"
+            rf"{description_pattern}"
+            rf"\s+"
+            rf"(-|{amount_pattern})"
+            rf"\s+"
+            rf"(-|{amount_pattern})"
+            rf"\s+"
+            rf"({amount_pattern})",
+            re.IGNORECASE,
         )
 
-        if transaction_amount is None:
-            return None
+        for match in pattern.finditer(text):
 
-        if balance is None:
-            return None
+            date_text = match.group(1)
+            description = self._canonical_description(
+                match.group(2)
+            )
 
-        # ---------------------------------------------------------
-        # 4. Determine debit / credit explicitly
-        # ---------------------------------------------------------
+            debit_text = match.group(3)
+            credit_text = match.group(4)
+            balance_text = match.group(5)
 
-        debit: float | None = None
-        credit: float | None = None
+            debit = self._parse_amount(
+                debit_text
+            )
 
-        normalized_description = (
-            description.lower().strip()
-        )
+            credit = self._parse_amount(
+                credit_text
+            )
 
-        # Explicitly classify credits first.
-        if normalized_description in (
-            self.CREDIT_DESCRIPTIONS
-        ):
-            credit = transaction_amount
+            balance = self._parse_amount(
+                balance_text
+            )
 
-        # Explicitly classify known debits.
-        elif normalized_description in (
-            self.DEBIT_DESCRIPTIONS
-        ):
-            debit = transaction_amount
+            # If the native PDF explicitly supplied debit
+            # and credit columns, trust them.
+            if debit is not None or credit is not None:
+                pass
 
-        # Handle names containing the word "credit"
-        # without incorrectly treating Credit Card Payment
-        # as income.
-        elif (
-            "credit card payment"
-            in normalized_description
-        ):
-            debit = transaction_amount
+            else:
+                transaction_amount = None
 
-        elif (
-            "salary"
-            in normalized_description
-        ):
-            credit = transaction_amount
+                if debit_text != "-":
+                    transaction_amount = (
+                        self._parse_amount(
+                            debit_text
+                        )
+                    )
 
-        else:
-            # Conservative fallback:
-            # If we can't confidently classify it,
-            # preserve it as a debit rather than inventing income.
-            debit = transaction_amount
+                elif credit_text != "-":
+                    transaction_amount = (
+                        self._parse_amount(
+                            credit_text
+                        )
+                    )
 
-        return {
-            "date": date_value.isoformat(),
-            "description": description,
-            "debit": debit,
-            "credit": credit,
-            "balance": balance,
-        }
+                if transaction_amount is not None:
+                    debit, credit = (
+                        self._classify_transaction(
+                            description,
+                            transaction_amount,
+                        )
+                    )
+
+            if balance is None:
+                continue
+
+            parsed_date = self._parse_date(
+                date_text
+            )
+
+            if parsed_date is None:
+                continue
+
+            transactions.append(
+                {
+                    "date": parsed_date,
+                    "description": description,
+                    "debit": debit,
+                    "credit": credit,
+                    "balance": balance,
+                }
+            )
+
+        return transactions
+
+    # =========================================================
+    # DESCRIPTION HANDLING
+    # =========================================================
 
     def _extract_description(
         self,
         line: str,
     ) -> str | None:
-        """
-        Find a known transaction description in the line
-        and return its canonical form.
-        """
 
-        # Remove the date and OCR separators from the line.
         line_without_date = re.sub(
             r"^[\"'`“”‘’\s]*"
             r"\d{1,2}[-A-Za-z/]+\d{4}",
@@ -353,8 +431,6 @@ class BankStatementParser:
             flags=re.IGNORECASE,
         )
 
-        # Create a compact representation so OCR spacing and
-        # separator errors don't prevent matching.
         compact_line = re.sub(
             r"[^A-Za-z]",
             "",
@@ -368,6 +444,94 @@ class BankStatementParser:
                 return canonical
 
         return None
+
+    def _canonical_description(
+        self,
+        description: str,
+    ) -> str:
+
+        compact = re.sub(
+            r"[^A-Za-z]",
+            "",
+            description,
+        ).lower()
+
+        for alias, canonical in (
+            self.DESCRIPTION_ALIASES.items()
+        ):
+            if alias == compact:
+                return canonical
+
+        return description.strip()
+
+    # =========================================================
+    # DEBIT / CREDIT CLASSIFICATION
+    # =========================================================
+
+    def _classify_transaction(
+        self,
+        description: str,
+        amount: float,
+    ) -> tuple[float | None, float | None]:
+
+        normalized = description.lower().strip()
+
+        # Salary Credit is income.
+        if normalized in self.CREDIT_DESCRIPTIONS:
+            return None, amount
+
+        # Credit Card Payment is explicitly a debit.
+        if normalized in self.DEBIT_DESCRIPTIONS:
+            return amount, None
+
+        if "credit card payment" in normalized:
+            return amount, None
+
+        if "salary" in normalized:
+            return None, amount
+
+        # Conservative fallback.
+        return amount, None
+
+    # =========================================================
+    # UTILITIES
+    # =========================================================
+
+    @staticmethod
+    def _parse_date(
+        value: str,
+    ) -> str | None:
+
+        try:
+            return datetime.strptime(
+                value,
+                "%d-%b-%Y",
+            ).date().isoformat()
+
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_amount(
+        value: str,
+    ) -> float | None:
+
+        if not value or value == "-":
+            return None
+
+        try:
+            return float(
+                Decimal(
+                    value.replace(",", "")
+                )
+            )
+
+        except InvalidOperation:
+            return None
+
+    # =========================================================
+    # SUMMARY
+    # =========================================================
 
     def _extract_summary(
         self,
@@ -425,25 +589,3 @@ class BankStatementParser:
         return self._parse_amount(
             match.group(1)
         )
-
-    @staticmethod
-    def _parse_amount(
-        value: str,
-    ) -> float | None:
-
-        if not value:
-            return None
-
-        value = value.strip()
-
-        # OCR sometimes surrounds values with
-        # punctuation. Keep only the actual number.
-        value = value.replace(",", "")
-
-        try:
-            amount = Decimal(value)
-
-        except InvalidOperation:
-            return None
-
-        return float(amount)

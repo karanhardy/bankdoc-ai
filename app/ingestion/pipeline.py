@@ -7,7 +7,10 @@ from app.ingestion.document_parser import BankStatementParser
 from app.storage.bronze import BronzeStorage
 from app.storage.silver import SilverStorage
 from app.transformation.gold_transformer import GoldTransformer
-
+from app.ingestion.document_detector import (
+    DocumentDetector,
+    DocumentType,
+)
 
 class DocumentPipeline:
     """
@@ -108,11 +111,35 @@ class DocumentPipeline:
             for page in pages
         )
 
-        parser = BankStatementParser()
+        detector = DocumentDetector()
 
-        silver_document = parser.parse(
+        detection = detector.detect(
             full_text
         )
+
+        print(
+            f"       Document type: "
+            f"{detection.document_type.value}"
+        )
+
+        print(
+            f"       Detection confidence: "
+            f"{detection.confidence}"
+        )
+
+        if detection.document_type == DocumentType.BANK_STATEMENT:
+
+            parser = BankStatementParser()
+
+            silver_document = parser.parse(
+                full_text
+            )
+
+        else:
+            raise NotImplementedError(
+                "Parser not implemented for document type: "
+                f"{detection.document_type.value}"
+            )
 
         silver_file = self.silver_storage.save(
             source_file=pdf_path,
