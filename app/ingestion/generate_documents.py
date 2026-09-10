@@ -219,6 +219,164 @@ def create_bank_statement() -> None:
 
     print(f"Created: {output_file}")
 
+def create_electricity_bill() -> None:
+    output_file = (
+        OUTPUT_DIR / "electricity_bill_march.pdf"
+    )
+
+    document = SimpleDocTemplate(
+        str(output_file),
+        pagesize=A4,
+        rightMargin=15 * mm,
+        leftMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+
+    story = []
+
+    story.append(
+        Paragraph(
+            "<b>EVEREST POWER COMPANY</b>",
+            styles["Title"],
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Electricity Bill",
+            styles["Heading2"],
+        )
+    )
+
+    story.append(Spacer(1, 10))
+
+    customer_data = [
+        ["Customer Name", "Alex Morgan"],
+        ["Consumer Number", "EB-123456789"],
+        ["Meter Number", "MTR-458921"],
+        ["Billing Period", "01-Mar-2026 to 31-Mar-2026"],
+        ["Bill Number", "EB-MAR-2026-001"],
+        ["Currency", "INR"],
+    ]
+
+    customer_table = Table(
+        customer_data,
+        colWidths=[55 * mm, 100 * mm],
+    )
+
+    customer_table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (0, -1),
+                    colors.lightgrey,
+                ),
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (0, -1),
+                    "Helvetica-Bold",
+                ),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+
+    story.append(customer_table)
+    story.append(Spacer(1, 15))
+
+    usage_data = [
+        ["Description", "Value"],
+        ["Previous Meter Reading", "8,420"],
+        ["Current Meter Reading", "8,665"],
+        ["Units Consumed", "245"],
+        ["Rate per Unit", "8.50"],
+        ["Energy Charges", "2,082.50"],
+        ["Taxes and Fees", "368.00"],
+        ["Total Amount Due", "2,450.50"],
+    ]
+
+    usage_table = Table(
+        usage_data,
+        colWidths=[80 * mm, 55 * mm],
+    )
+
+    usage_table.setStyle(
+        TableStyle(
+            [
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, 0),
+                    colors.lightgrey,
+                ),
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (-1, 0),
+                    "Helvetica-Bold",
+                ),
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.5,
+                    colors.grey,
+                ),
+                (
+                    "ALIGN",
+                    (1, 1),
+                    (1, -1),
+                    "RIGHT",
+                ),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+
+    story.append(usage_table)
+    story.append(Spacer(1, 15))
+
+    payment_data = [
+        ["Due Date", "10-Apr-2026"],
+        ["Payment Status", "PAID"],
+        ["Payment Amount", "2,450.50"],
+    ]
+
+    payment_table = Table(
+        payment_data,
+        colWidths=[60 * mm, 70 * mm],
+    )
+
+    payment_table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (0, -1),
+                    "Helvetica-Bold",
+                ),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+
+    story.append(payment_table)
+
+    document.build(story)
+
+    print(
+        f"Created: {output_file}"
+    )
 
 if __name__ == "__main__":
     create_bank_statement()
+    create_electricity_bill()
